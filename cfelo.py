@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -108,6 +109,26 @@ def processdata(df, workouts):
     return df
 
 
+def cleanregionaldata(df, renamecomlums):
+    # clean up the column name cells
+    df.columns = renamecolumns
+
+    # Make Name a single long name
+    df['NAME'] = df['NAME'].str.replace('-', '')
+    df['NAME'] = df['NAME'].str.replace('.', '')
+    df['NAME'] = df['NAME'].str.replace(' ', '')
+
+    # Use regex to get the name only
+    df['NAME'] = df['NAME'].str.extract(r'^(\w+)', expand=False)
+
+    # Use regex to get the first number (place) from the workout cell,
+    # make it into a number or a NaN
+    for w in workouts:
+        df[w] = df[w].str.extract(r'^(\d+)', expand=False)
+        df[w] = df[w].apply(pd.to_numeric, errors='coerce')
+    return df
+
+
 #
 # Calculate 2018 Open ELO
 #
@@ -119,10 +140,7 @@ workouts = ['18.1', '18.2', '18.2A', '18.3', '18.4', '18.5']
 renamecolumns = ['RANK', 'NAME', 'POINTS'] + workouts
 workouts_elo = [x + '_ELO' for x in workouts]
 
-#
 # Clean the 2018 Open Data
-#
-
 # clean up the column name cells
 df.columns = renamecolumns
 
@@ -153,9 +171,48 @@ df = processdata(df, workouts)
 df.to_csv('./cf_open_elo_results.csv')
 
 # Get the ELOs to seed the next round
-df1 = df[['NAME', 'ELO']]
-print(df1.head())
+dfopen = df[['NAME', 'ELO']]
+print(dfopen.head())
 
+
+#
+# Calculate 2018 Regionals ELO
+#
+regionalfilenames = ['atlantic', 'meridian', 'central', 'pacific', 'east',
+                     'south', 'europe', 'west', 'latinamerica']
+regionalresults = []
+
+for file in regionalfilenames:
+    df = pd.read_csv('./2018_men_' + file + '_region.csv',)
+    print(df.head())
+    print(df.info())
+
+    workouts = ['EVENT 1', 'EVENT 2', 'EVENT 3', 'EVENT 4', 'EVENT 5', 'EVENT 6']
+    renamecolumns = ['RANK', 'NAME', 'POINTS'] + workouts
+    workouts_elo = [x + '_ELO' for x in workouts]
+
+    # Clean the 2018 Regionals Data
+    cleanregionaldata(df, renamecolumns)
+
+    # Use the open ELO
+    df = pd.merge(df, dfopen, on='NAME')
+    df['ELO_IN'] = df['ELO']
+    print(df.head())
+
+    # Calculate the ELOs
+    df = processdata(df, workouts)
+
+    # Save the results
+    df.to_csv('./cf_' + file + '_regional_results.csv')
+
+    # Get the ELOs to seed the next round
+    df1 = df[['NAME', 'ELO']]
+    regionalresults.append(df1)
+    print(df1.head())
+
+print(type(regionalresults))
+print(type(regionalresults[0]))
+print(len(regionalresults))
 #
 # Crossfit 2018 Games ELO
 #
@@ -176,8 +233,14 @@ workouts_elo = [x + '_ELO' for x in workouts]
 # clean up the column name cells
 df.columns = renamecolumns
 
+# Make Name a single long first name
+df['NAME'] = df['NAME'].str.replace(' ', '')
+
 # Cleanup the NAME cells. Get everything on the same line
 df['NAME'] = df['NAME'].str.replace('\n', ' ')
+
+# remove hyphen
+df['NAME'] = df['NAME'].str.replace('-', '')
 
 # Use regex to get the first and last name only
 df['NAME'] = df['NAME'].str.extract(r'^(\w+\s\w+)', expand=False)
@@ -191,8 +254,19 @@ for w in workouts:
     df[w] = df[w].str.extract(r'^(\d+)', expand=False)
     df[w] = df[w].apply(pd.to_numeric, errors='coerce')
 
+df['ELO'] = np.nan
+
 # Everyone starts with an ELO from the open
-df = pd.merge(df, df1, on='NAME')
+for result in regionalresults:
+    df = pd.merge(df, result, on='NAME', how='left')
+    df['ELO_x'] = df['ELO_x'].fillna(df['ELO_y'])
+    df['ELO'] = df['ELO_x']
+    df = df.drop(columns=['ELO_x', 'ELO_y'])
+
+# TODO stop on NaN ELOs!
+print(df[df.isnull().any(axis=1)]['ELO'].head())
+
+# Save the incoming ELOs
 df['ELO_IN'] = df['ELO']
 print(df.head())
 
